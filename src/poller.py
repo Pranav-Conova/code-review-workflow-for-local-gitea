@@ -9,12 +9,12 @@ import time
 import threading
 import urllib.request
 import urllib.error
-from queue import Queue
 
 from config import (
     GITEA_HOST, GITEA_TOKEN, POLL_INTERVAL,
-    MAX_CONCURRENT_REVIEWS, LOG_FILE, REVIEWED_FILE, DATA_DIR,
+    MAX_CONCURRENT_REVIEWS, LOG_FILE, DATA_DIR,
 )
+import state
 from reviewer import run_review
 
 # Ensure data directory exists
@@ -22,27 +22,21 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 # --- Logging ---
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.DEBUG),
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(),
-    ],
-)
+
+
+def setup_logging():
+    """Configure logging with file + console handlers."""
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.DEBUG),
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(LOG_FILE),
+            logging.StreamHandler(),
+        ],
+    )
+
+
 logger = logging.getLogger("pr-review")
-
-# --- Track reviewed PRs ---
-def load_reviewed():
-    if os.path.exists(REVIEWED_FILE):
-        with open(REVIEWED_FILE) as f:
-            return set(json.load(f))
-    return set()
-
-
-def save_reviewed(reviewed: set):
-    with open(REVIEWED_FILE, "w") as f:
-        json.dump(sorted(reviewed), f)
 
 
 # --- Gitea API ---
@@ -113,54 +107,61 @@ def update_pr_title(owner, repo, pr_number, new_title):
         return False
 
 
-# --- Review queue ---
-review_queue = Queue()
-
-
+# --- Worker ---
 def worker():
     thread_name = threading.current_thread().name
+    state.set_worker_status(thread_name, "idle")
     logger.info(f"Worker thread {thread_name} started, waiting for jobs...")
     while True:
-        job = review_queue.get()
-        pr_id = f"{job['repo']}#{job['number']}"
+        job = state.review_queue.get()
+        pr_key = f"{job['repo']}#{job['number']}"
         original_title = job["title"]
         try:
+            state.set_worker_status(thread_name, "reviewing", pr_key)
+            state.update_review(pr_key, "in-progress")
+
             # Add WIP prefix so the author knows review is in progress
             update_pr_title(job["owner"], job["repo_name"], job["number"], f"WIP: {original_title}")
 
-            logger.info(f"[{thread_name}] Starting review: {pr_id} — {original_title}")
-            run_review(job)
-            logger.info(f"[{thread_name}] Finished review: {pr_id}")
+            logger.info(f"[{thread_name}] Starting review: {pr_key} — {original_title}")
+            result = run_review(job)
+
+            if result and result.get("success"):
+                state.update_review(pr_key, "done", {
+                    "duration_seconds": result.get("duration"),
+                })
+                logger.info(f"[{thread_name}] Finished review: {pr_key}")
+            else:
+                error_msg = result.get("error", "Unknown error") if result else "No result returned"
+                state.update_review(pr_key, "failed", {"error": error_msg})
+                logger.error(f"[{thread_name}] Review failed {pr_key}: {error_msg}")
         except Exception as e:
-            logger.error(f"[{thread_name}] Review failed {pr_id}: {e}", exc_info=True)
+            state.update_review(pr_key, "failed", {"error": str(e)})
+            logger.error(f"[{thread_name}] Review failed {pr_key}: {e}", exc_info=True)
         finally:
             # Remove WIP prefix when review is done (success or failure)
             update_pr_title(job["owner"], job["repo_name"], job["number"], original_title)
-            review_queue.task_done()
+            state.set_worker_status(thread_name, "idle")
+            state.review_queue.task_done()
 
 
-# --- Main loop ---
-def main():
-    if not GITEA_TOKEN:
-        print("ERROR: Set GITEA_TOKEN environment variable")
-        sys.exit(1)
-
-    # Start worker threads
+def start_workers():
+    """Start worker threads."""
     for _ in range(MAX_CONCURRENT_REVIEWS):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
 
-    reviewed = load_reviewed()
-    logger.info(f"Starting poller — checking every {POLL_INTERVAL}s")
-    logger.info(f"Already reviewed: {len(reviewed)} PRs")
 
-    # Fetch repos once at startup, refresh every 5 minutes
+def run_poll_loop():
+    """Run the infinite polling loop. Blocking — meant to be called in a thread."""
+    logger.info(f"Starting poller — checking every {POLL_INTERVAL}s")
+    logger.info(f"Already reviewed: {len(state.review_history)} PRs")
+
     repos = []
     last_repo_fetch = 0
 
     while True:
         try:
-            # Refresh repo list every 5 minutes
             now = time.time()
             if now - last_repo_fetch > 300:
                 repos = get_all_repos()
@@ -174,14 +175,12 @@ def main():
 
                 prs = get_open_prs(owner, name)
                 for pr in prs:
-                    # Unique key: owner/repo#number
                     pr_key = f"{owner}/{name}#{pr['number']}"
 
-                    if pr_key in reviewed:
+                    if pr_key in state.review_history:
                         logger.debug(f"Skipping {pr_key} — already reviewed")
                         continue
 
-                    # New PR found
                     job = {
                         "number": pr["number"],
                         "title": pr["title"],
@@ -201,11 +200,21 @@ def main():
                     logger.info(
                         f"  Branch: {job['base_branch']} <- {job['head_branch']} | SHA: {job['head_sha'][:8]}"
                     )
-                    review_queue.put(job)
 
-                    # Mark as reviewed immediately to avoid duplicate queueing
-                    reviewed.add(pr_key)
-                    save_reviewed(reviewed)
+                    # Store rich metadata
+                    state.update_review(pr_key, "queued", {
+                        "number": pr["number"],
+                        "title": pr["title"],
+                        "owner": owner,
+                        "repo_name": name,
+                        "sender": pr["user"]["login"],
+                        "head_branch": pr["head"]["ref"],
+                        "base_branch": pr["base"]["ref"],
+                        "gitea_url": f"{GITEA_HOST}/{owner}/{name}/pulls/{pr['number']}",
+                        "triggered_by": "poller",
+                    })
+
+                    state.review_queue.put(job)
                     new_count += 1
 
             if new_count > 0:
@@ -217,6 +226,18 @@ def main():
             logger.error(f"Poll cycle error: {e}")
 
         time.sleep(POLL_INTERVAL)
+
+
+# --- Main (backward-compatible standalone entry point) ---
+def main():
+    if not GITEA_TOKEN:
+        print("ERROR: Set GITEA_TOKEN environment variable")
+        sys.exit(1)
+
+    setup_logging()
+    state.load_history()
+    start_workers()
+    run_poll_loop()
 
 
 if __name__ == "__main__":

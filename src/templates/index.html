@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude PR Reviewer</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>Claude PR Reviewer</h1>
+        </div>
+        <div class="header-right">
+            <span class="uptime" id="uptime">Uptime: --</span>
+            <span class="connection-badge" id="ws-status">Connecting...</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- System Status -->
+        <section class="card" id="status-section">
+            <h2>System Status</h2>
+            <div class="status-grid">
+                <div class="stat">
+                    <span class="stat-value" id="queue-size">--</span>
+                    <span class="stat-label">Queued</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="active-workers">--</span>
+                    <span class="stat-label">Active Workers</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="total-reviews">--</span>
+                    <span class="stat-label">Total Reviews</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="done-count">--</span>
+                    <span class="stat-label">Completed</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="failed-count">--</span>
+                    <span class="stat-label">Failed</span>
+                </div>
+            </div>
+            <div id="workers-detail" class="workers-detail"></div>
+        </section>
+
+        <!-- Manual Trigger -->
+        <section class="card">
+            <h2>Manual Review Trigger</h2>
+            <form id="trigger-form" class="trigger-form">
+                <input type="text" id="trigger-owner" placeholder="Owner (e.g. NUCORE)" required>
+                <input type="text" id="trigger-repo" placeholder="Repository" required>
+                <input type="number" id="trigger-pr" placeholder="PR #" required min="1">
+                <button type="submit" id="trigger-btn">Trigger Review</button>
+            </form>
+            <div id="trigger-msg" class="trigger-msg"></div>
+        </section>
+
+        <!-- Review History -->
+        <section class="card">
+            <div class="section-header">
+                <h2>Review History</h2>
+                <div class="filter-group">
+                    <select id="status-filter">
+                        <option value="">All</option>
+                        <option value="queued">Queued</option>
+                        <option value="in-progress">In Progress</option>
+                        <option value="done">Done</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table id="reviews-table">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>PR</th>
+                            <th>Title</th>
+                            <th>Author</th>
+                            <th>Duration</th>
+                            <th>Triggered</th>
+                            <th>Link</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reviews-body">
+                        <tr><td colspan="7" class="empty">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Live Logs -->
+        <section class="card logs-section">
+            <div class="section-header">
+                <h2>Live Logs</h2>
+                <div class="log-controls">
+                    <label class="toggle">
+                        <input type="checkbox" id="auto-scroll" checked>
+                        Auto-scroll
+                    </label>
+                    <button id="clear-logs" class="btn-small">Clear</button>
+                </div>
+            </div>
+            <div id="log-container" class="log-container"></div>
+        </section>
+    </main>
+
+    <script>
+        // --- State ---
+        let ws = null;
+        let autoScroll = true;
+        let reconnectDelay = 1000;
+
+        // --- Helpers ---
+        function formatUptime(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            if (h > 0) return `${h}h ${m}m`;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+
+        function formatDuration(sec) {
+            if (sec == null) return '--';
+            if (sec < 60) return `${Math.round(sec)}s`;
+            return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+        }
+
+        function timeSince(ts) {
+            if (!ts) return '--';
+            const sec = Math.floor(Date.now() / 1000 - ts);
+            return formatDuration(sec) + ' ago';
+        }
+
+        function statusBadge(status) {
+            const cls = {
+                'done': 'badge-done',
+                'failed': 'badge-failed',
+                'in-progress': 'badge-progress',
+                'queued': 'badge-queued',
+            }[status] || 'badge-queued';
+            return `<span class="badge ${cls}">${status}</span>`;
+        }
+
+        function logLevelClass(line) {
+            if (line.includes('[ERROR]')) return 'log-error';
+            if (line.includes('[WARNING]')) return 'log-warn';
+            if (line.includes('[DEBUG]')) return 'log-debug';
+            return 'log-info';
+        }
+
+        // --- Status Polling ---
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+
+                document.getElementById('uptime').textContent = 'Uptime: ' + formatUptime(data.uptime_seconds);
+                document.getElementById('queue-size').textContent = data.queue_size;
+                document.getElementById('total-reviews').textContent = data.total_reviews;
+                document.getElementById('done-count').textContent = data.reviews_by_status.done || 0;
+                document.getElementById('failed-count').textContent = data.reviews_by_status.failed || 0;
+
+                const activeCount = data.workers.filter(w => w.status === 'reviewing').length;
+                document.getElementById('active-workers').textContent = `${activeCount}/${data.workers.length}`;
+
+                // Worker details
+                const detail = document.getElementById('workers-detail');
+                detail.innerHTML = data.workers.map(w => {
+                    if (w.status === 'reviewing') {
+                        const since = w.reviewing_since ? formatDuration(Math.floor(Date.now() / 1000 - w.reviewing_since)) : '';
+                        return `<div class="worker-row worker-active"><span class="worker-dot active"></span>${w.name}: reviewing <strong>${w.current_pr}</strong> (${since})</div>`;
+                    }
+                    return `<div class="worker-row"><span class="worker-dot idle"></span>${w.name}: idle</div>`;
+                }).join('');
+            } catch (e) {
+                console.error('Status fetch failed:', e);
+            }
+        }
+
+        // --- Reviews Polling ---
+        async function fetchReviews() {
+            try {
+                const filter = document.getElementById('status-filter').value;
+                const params = new URLSearchParams({ limit: '100' });
+                if (filter) params.set('status', filter);
+
+                const res = await fetch('/api/reviews?' + params);
+                const data = await res.json();
+                const tbody = document.getElementById('reviews-body');
+
+                if (data.reviews.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty">No reviews yet</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.reviews.map(r => `
+                    <tr>
+                        <td>${statusBadge(r.status)}</td>
+                        <td class="pr-key">${r.pr_key || '--'}</td>
+                        <td class="pr-title">${(r.title || '').substring(0, 60)}</td>
+                        <td>${r.sender || '--'}</td>
+                        <td>${formatDuration(r.duration_seconds)}</td>
+                        <td>${r.triggered_by || '--'}</td>
+                        <td>${r.gitea_url ? `<a href="${r.gitea_url}" target="_blank" rel="noopener">Open</a>` : '--'}</td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                console.error('Reviews fetch failed:', e);
+            }
+        }
+
+        // --- Manual Trigger ---
+        document.getElementById('trigger-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('trigger-btn');
+            const msg = document.getElementById('trigger-msg');
+            btn.disabled = true;
+            msg.textContent = 'Triggering...';
+            msg.className = 'trigger-msg';
+
+            try {
+                const res = await fetch('/api/reviews/trigger', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        owner: document.getElementById('trigger-owner').value.trim(),
+                        repo: document.getElementById('trigger-repo').value.trim(),
+                        pr_number: parseInt(document.getElementById('trigger-pr').value),
+                    }),
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    msg.textContent = data.error;
+                    msg.className = 'trigger-msg trigger-error';
+                } else {
+                    msg.textContent = `Queued ${data.pr_key} for review`;
+                    msg.className = 'trigger-msg trigger-success';
+                    document.getElementById('trigger-pr').value = '';
+                    fetchReviews();
+                }
+            } catch (err) {
+                msg.textContent = 'Request failed: ' + err.message;
+                msg.className = 'trigger-msg trigger-error';
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        // --- WebSocket Live Logs ---
+        function connectWebSocket() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${proto}//${location.host}/ws/logs`);
+
+            ws.onopen = () => {
+                document.getElementById('ws-status').textContent = 'Connected';
+                document.getElementById('ws-status').className = 'connection-badge connected';
+                reconnectDelay = 1000;
+            };
+
+            ws.onmessage = (event) => {
+                appendLog(event.data);
+            };
+
+            ws.onclose = () => {
+                document.getElementById('ws-status').textContent = 'Disconnected';
+                document.getElementById('ws-status').className = 'connection-badge disconnected';
+                setTimeout(() => {
+                    reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+                    connectWebSocket();
+                }, reconnectDelay);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+
+        function appendLog(line) {
+            const container = document.getElementById('log-container');
+            const div = document.createElement('div');
+            div.className = 'log-line ' + logLevelClass(line);
+            div.textContent = line;
+            container.appendChild(div);
+
+            // Cap at 2000 lines
+            while (container.children.length > 2000) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (autoScroll) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        // Auto-scroll toggle
+        document.getElementById('auto-scroll').addEventListener('change', (e) => {
+            autoScroll = e.target.checked;
+            if (autoScroll) {
+                const container = document.getElementById('log-container');
+                container.scrollTop = container.scrollHeight;
+            }
+        });
+
+        // Pause auto-scroll when user scrolls up
+        document.getElementById('log-container').addEventListener('scroll', (e) => {
+            const el = e.target;
+            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+            if (!atBottom && autoScroll) {
+                autoScroll = false;
+                document.getElementById('auto-scroll').checked = false;
+            }
+        });
+
+        // Clear logs
+        document.getElementById('clear-logs').addEventListener('click', () => {
+            document.getElementById('log-container').innerHTML = '';
+        });
+
+        // Filter change
+        document.getElementById('status-filter').addEventListener('change', fetchReviews);
+
+        // --- Init ---
+        fetchStatus();
+        fetchReviews();
+        connectWebSocket();
+        setInterval(fetchStatus, 5000);
+        setInterval(fetchReviews, 10000);
+    </script>
+</body>
+</html>

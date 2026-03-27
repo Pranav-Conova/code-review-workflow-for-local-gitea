@@ -30,3 +30,9 @@ LOG_FILE = os.environ.get(
 
 # File to track which PRs have already been reviewed
 REVIEWED_FILE = os.path.join(DATA_DIR, "reviewed.json")
+REVIEWS_FILE = os.path.join(DATA_DIR, "reviews.json")
+
+# Dashboard settings
+DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
+DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "8000"))
+DASHBOARD_ENABLED = os.environ.get("DASHBOARD_ENABLED", "true").lower() == "true"

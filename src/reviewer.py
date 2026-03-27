@@ -1,6 +1,7 @@
 import subprocess
 import logging
 import os
+import time
 from config import PROJECT_DIR, CLAUDE_BINARY
 from prompt_template import build_review_prompt
 
@@ -9,7 +10,9 @@ logger = logging.getLogger("pr-review")
 MCP_CONFIG_PATH = os.path.join(PROJECT_DIR, ".mcp.json")
 
 
-def run_review(job: dict):
+def run_review(job: dict) -> dict:
+    """Run a Claude review for a PR. Returns {"success": bool, "duration": float, "error": str|None}."""
+    start = time.time()
     pr_id = f"{job['repo']}#{job['number']}"
     logger.info(f"[{pr_id}] Building review prompt...")
     prompt = build_review_prompt(job)
@@ -85,6 +88,8 @@ def run_review(job: dict):
             env=env,
         )
 
+        duration = round(time.time() - start, 1)
+
         if result.returncode != 0:
             logger.error(
                 f"[{pr_id}] Claude CLI exited with code {result.returncode}"
@@ -93,15 +98,20 @@ def run_review(job: dict):
                 logger.error(f"[{pr_id}] STDERR:\n{result.stderr[:3000]}")
             if result.stdout:
                 logger.warning(f"[{pr_id}] STDOUT (on failure):\n{result.stdout[:3000]}")
+            return {"success": False, "duration": duration, "error": f"Exit code {result.returncode}"}
         else:
             logger.info(f"[{pr_id}] Claude CLI completed successfully")
             logger.info(f"[{pr_id}] Claude output:\n{result.stdout}")
             if result.stderr:
                 logger.debug(f"[{pr_id}] STDERR (non-fatal):\n{result.stderr[:2000]}")
+            return {"success": True, "duration": duration, "error": None}
 
     except subprocess.TimeoutExpired:
         logger.error(f"[{pr_id}] Claude CLI timed out after 600s")
+        return {"success": False, "duration": round(time.time() - start, 1), "error": "Timed out after 600s"}
     except FileNotFoundError:
         logger.error(f"[{pr_id}] Claude binary not found at: {CLAUDE_BINARY}")
+        return {"success": False, "duration": round(time.time() - start, 1), "error": f"Binary not found: {CLAUDE_BINARY}"}
     except Exception as e:
         logger.error(f"[{pr_id}] Failed to spawn Claude CLI: {e}", exc_info=True)
+        return {"success": False, "duration": round(time.time() - start, 1), "error": str(e)}

@@ -77,4 +77,5 @@ exec su -s /bin/bash reviewer -c "\
   export GITEA_HOST='$GITEA_HOST' && \
   export POLL_INTERVAL='${POLL_INTERVAL:-10}' && \
   export MAX_CONCURRENT_REVIEWS='${MAX_CONCURRENT_REVIEWS:-2}' && \
-  python3 src/poller.py"
+  export DASHBOARD_PORT='${DASHBOARD_PORT:-8000}' && \
+  python3 src/app.py"

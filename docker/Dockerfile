@@ -3,6 +3,7 @@ FROM node:20-slim
 # Install Python, Go, and essentials
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
+    python3-pip \
     ca-certificates \
     curl \
     git \
@@ -29,6 +30,9 @@ RUN useradd -m -s /bin/bash reviewer \
 WORKDIR /app
 
 # Copy project files (build context is project root: docker build -f docker/Dockerfile .)
+COPY requirements.txt requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
+
 COPY .mcp.json .mcp.json
 COPY src/ src/
 
@@ -51,6 +55,9 @@ RUN echo '{\n\
 # Create data directory for logs and state
 RUN mkdir -p /app/data \
     && chown -R reviewer:reviewer /app
+
+# Expose dashboard port
+EXPOSE ${DASHBOARD_PORT:-8000}
 
 # Entrypoint script that sets up auth + starts poller
 COPY docker/entrypoint.sh /entrypoint.sh

@@ -7,6 +7,8 @@ services:
       dockerfile: docker/Dockerfile
     container_name: claude-pr-reviewer
     restart: unless-stopped
+    ports:
+      - "7000:7000"
     volumes:
       - review-data:/app/data
     environment:
