@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 GITEA_HOST = os.environ.get("GITEA_HOST", "http://localhost:3000")
 GITEA_TOKEN = os.environ.get("GITEA_TOKEN", "")
