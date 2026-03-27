@@ -1,0 +1,4 @@
+# Code Review Claude - Python Dependencies
+#
+# This project uses only the Python standard library.
+# No third-party packages are required.
