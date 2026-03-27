@@ -1,7 +1,10 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # In Docker, env vars are injected by compose
 
 GITEA_HOST = os.environ.get("GITEA_HOST", "http://localhost:3000")
 GITEA_TOKEN = os.environ.get("GITEA_TOKEN", "")
