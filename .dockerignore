@@ -1,0 +1,6 @@
+.claude/
+.git/
+__pycache__/
+*.pyc
+data/
+README.md

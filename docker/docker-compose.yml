@@ -1,0 +1,19 @@
+services:
+  pr-reviewer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: claude-pr-reviewer
+    restart: unless-stopped
+    volumes:
+      - review-data:/app/data
+    environment:
+      - CLAUDE_TOKEN=${CLAUDE_TOKEN}
+      - CLAUDE_REFRESH_TOKEN=${CLAUDE_REFRESH_TOKEN}
+      - GITEA_TOKEN=${GITEA_TOKEN}
+      - GITEA_HOST=${GITEA_HOST:-http://localhost:3000}
+      - POLL_INTERVAL=${POLL_INTERVAL:-10}
+      - MAX_CONCURRENT_REVIEWS=${MAX_CONCURRENT_REVIEWS:-2}
+
+volumes:
+  review-data:
