@@ -161,6 +161,11 @@ def run_poll_loop():
     last_repo_fetch = 0
 
     while True:
+        # Check if poller is paused
+        if not state.poller_running:
+            time.sleep(POLL_INTERVAL)
+            continue
+
         try:
             now = time.time()
             if now - last_repo_fetch > 300:

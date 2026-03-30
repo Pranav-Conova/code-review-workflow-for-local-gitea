@@ -4,333 +4,776 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Claude PR Reviewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+
+    <!-- Header -->
     <header>
         <div class="header-left">
-            <h1>Claude PR Reviewer</h1>
+            <div class="logo-mark">C</div>
+            <h1>Claude Reviewer <span>/ Dashboard</span></h1>
         </div>
         <div class="header-right">
-            <span class="uptime" id="uptime">Uptime: --</span>
-            <span class="connection-badge" id="ws-status">Connecting...</span>
+            <button class="poller-toggle" id="poller-toggle" title="Toggle poller">
+                <span class="poller-dot" id="poller-dot"></span>
+                <span id="poller-label">Poller: --</span>
+            </button>
+            <span class="uptime" id="uptime">--:--:--</span>
+            <div class="conn-indicator connecting" id="ws-status">
+                <span class="conn-dot"></span>
+                <span class="conn-label">Connecting</span>
+            </div>
         </div>
     </header>
 
-    <main>
-        <!-- System Status -->
-        <section class="card" id="status-section">
-            <h2>System Status</h2>
-            <div class="status-grid">
-                <div class="stat">
-                    <span class="stat-value" id="queue-size">--</span>
-                    <span class="stat-label">Queued</span>
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Tab Navigation -->
+    <div class="tab-bar">
+        <button class="tab active" data-tab="overview">Overview</button>
+        <button class="tab" data-tab="batch">Batch PR Review</button>
+        <button class="tab" data-tab="codebase">Codebase Review</button>
+    </div>
+
+    <!-- ============================================================
+         TAB: OVERVIEW (existing dashboard)
+         ============================================================ -->
+    <div class="dashboard tab-content active" id="tab-overview">
+
+        <div class="top-row">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8h2m8 0h2M8 2v2m0 8v2M4.5 4.5l1 1m5 5 1 1M4.5 11.5l1-1m5-5 1-1"/></svg>
+                        System Status
+                    </div>
                 </div>
-                <div class="stat">
-                    <span class="stat-value" id="active-workers">--</span>
-                    <span class="stat-label">Active Workers</span>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value accent" id="queue-size">0</div>
+                        <div class="metric-label">Queued</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value blue" id="active-workers">0/0</div>
+                        <div class="metric-label">Workers</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="total-reviews">0</div>
+                        <div class="metric-label">Total</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value green" id="done-count">0</div>
+                        <div class="metric-label">Done</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value red" id="failed-count">0</div>
+                        <div class="metric-label">Failed</div>
+                    </div>
                 </div>
-                <div class="stat">
-                    <span class="stat-value" id="total-reviews">--</span>
-                    <span class="stat-label">Total Reviews</span>
+                <div class="workers" id="workers-detail"></div>
+            </div>
+
+            <div class="card trigger-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v10M3 8h10"/></svg>
+                        Trigger Review
+                    </div>
                 </div>
-                <div class="stat">
-                    <span class="stat-value" id="done-count">--</span>
-                    <span class="stat-label">Completed</span>
+                <form id="trigger-form" class="trigger-fields" autocomplete="off">
+                    <div class="input-group">
+                        <label for="trigger-owner">Owner</label>
+                        <input type="text" id="trigger-owner" placeholder="NUCORE" required>
+                    </div>
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="trigger-repo">Repository</label>
+                            <input type="text" id="trigger-repo" placeholder="DMC-BE" required>
+                        </div>
+                        <div class="input-group">
+                            <label for="trigger-pr">PR Number</label>
+                            <input type="number" id="trigger-pr" placeholder="123" required min="1">
+                        </div>
+                    </div>
+                    <button type="submit" id="trigger-btn" class="trigger-btn">Queue Review</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="bottom-row">
+            <div class="card reviews-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h8"/></svg>
+                        Review History
+                    </div>
+                    <div class="filter-pills" id="filter-pills">
+                        <button class="filter-pill active" data-filter="">All</button>
+                        <button class="filter-pill" data-filter="queued">Queued</button>
+                        <button class="filter-pill" data-filter="in-progress">Active</button>
+                        <button class="filter-pill" data-filter="done">Done</button>
+                        <button class="filter-pill" data-filter="failed">Failed</button>
+                    </div>
                 </div>
-                <div class="stat">
-                    <span class="stat-value" id="failed-count">--</span>
-                    <span class="stat-label">Failed</span>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Pull Request</th>
+                                <th>Title</th>
+                                <th>Author</th>
+                                <th>Duration</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="reviews-body">
+                            <tr><td colspan="6" class="empty-state">Loading reviews...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
-            <div id="workers-detail" class="workers-detail"></div>
-        </section>
 
-        <!-- Manual Trigger -->
-        <section class="card">
-            <h2>Manual Review Trigger</h2>
-            <form id="trigger-form" class="trigger-form">
-                <input type="text" id="trigger-owner" placeholder="Owner (e.g. NUCORE)" required>
-                <input type="text" id="trigger-repo" placeholder="Repository" required>
-                <input type="number" id="trigger-pr" placeholder="PR #" required min="1">
-                <button type="submit" id="trigger-btn">Trigger Review</button>
-            </form>
-            <div id="trigger-msg" class="trigger-msg"></div>
-        </section>
+            <div class="card logs-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4l4 4-4 4M8 12h6"/></svg>
+                        Live Logs
+                    </div>
+                    <div class="log-toolbar">
+                        <label class="toggle">
+                            <input type="checkbox" id="auto-scroll" class="toggle-switch" checked>
+                            Auto
+                        </label>
+                        <button class="btn-icon" id="clear-logs" title="Clear logs" aria-label="Clear logs">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v5M10 7v5M3 4l1 9a1 1 0 001 1h6a1 1 0 001-1l1-9"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="log-container" class="log-container"></div>
+            </div>
+        </div>
+    </div>
 
-        <!-- Review History -->
-        <section class="card">
-            <div class="section-header">
-                <h2>Review History</h2>
-                <div class="filter-group">
-                    <select id="status-filter">
-                        <option value="">All</option>
-                        <option value="queued">Queued</option>
-                        <option value="in-progress">In Progress</option>
-                        <option value="done">Done</option>
-                        <option value="failed">Failed</option>
-                    </select>
+    <!-- ============================================================
+         TAB: BATCH PR REVIEW
+         ============================================================ -->
+    <div class="dashboard tab-content" id="tab-batch">
+        <div class="top-row">
+            <div class="card" style="grid-column: 1 / -1;">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2v12M12 2v12M1 8h14"/></svg>
+                        Cross-PR Integration Review
+                    </div>
+                </div>
+                <p class="card-desc">Review multiple PRs from different repos together to find integration issues, API mismatches, and deployment conflicts. Results are posted to Gitea as review comments.</p>
+
+                <div class="batch-form" id="batch-form">
+                    <div class="batch-pr-list" id="batch-pr-list">
+                        <div class="batch-pr-row" data-idx="0">
+                            <div class="input-group"><label>Owner</label><input type="text" class="bp-owner" placeholder="NUCORE"></div>
+                            <div class="input-group"><label>Repo</label><input type="text" class="bp-repo" placeholder="DMC-BE"></div>
+                            <div class="input-group"><label>PR #</label><input type="number" class="bp-pr" placeholder="123" min="1"></div>
+                        </div>
+                        <div class="batch-pr-row" data-idx="1">
+                            <div class="input-group"><label>Owner</label><input type="text" class="bp-owner" placeholder="NUCORE"></div>
+                            <div class="input-group"><label>Repo</label><input type="text" class="bp-repo" placeholder="Itinerary-Builder-FE"></div>
+                            <div class="input-group"><label>PR #</label><input type="number" class="bp-pr" placeholder="456" min="1"></div>
+                        </div>
+                    </div>
+                    <div class="batch-actions">
+                        <button class="btn-secondary" id="batch-add-pr">+ Add PR</button>
+                        <button class="trigger-btn" id="batch-submit">Start Integration Review</button>
+                    </div>
                 </div>
             </div>
-            <div class="table-wrap">
-                <table id="reviews-table">
-                    <thead>
-                        <tr>
-                            <th>Status</th>
-                            <th>PR</th>
-                            <th>Title</th>
-                            <th>Author</th>
-                            <th>Duration</th>
-                            <th>Triggered</th>
-                            <th>Link</th>
-                        </tr>
-                    </thead>
-                    <tbody id="reviews-body">
-                        <tr><td colspan="7" class="empty">Loading...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
+        </div>
 
-        <!-- Live Logs -->
-        <section class="card logs-section">
-            <div class="section-header">
-                <h2>Live Logs</h2>
-                <div class="log-controls">
-                    <label class="toggle">
-                        <input type="checkbox" id="auto-scroll" checked>
-                        Auto-scroll
-                    </label>
-                    <button id="clear-logs" class="btn-small">Clear</button>
+        <!-- Batch review history -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Batch Review History</div>
+            </div>
+            <div class="batch-list" id="batch-list">
+                <div class="empty-state">No batch reviews yet</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         TAB: CODEBASE REVIEW
+         ============================================================ -->
+    <div class="dashboard tab-content" id="tab-codebase">
+        <div class="top-row">
+            <div class="card" style="grid-column: 1 / -1;">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h5l2 2h5v8H2z"/></svg>
+                        Full Codebase Review
+                    </div>
+                </div>
+                <p class="card-desc">Analyze entire codebases together for architecture issues, security vulnerabilities, integration problems, and technical debt. Results are shown here only — nothing is posted to Gitea.</p>
+
+                <div class="batch-form" id="codebase-form">
+                    <div class="batch-pr-list" id="codebase-repo-list">
+                        <div class="batch-pr-row" data-idx="0">
+                            <div class="input-group"><label>Owner</label><input type="text" class="cr-owner" placeholder="NUCORE"></div>
+                            <div class="input-group"><label>Repository</label><input type="text" class="cr-repo" placeholder="DMC-BE"></div>
+                        </div>
+                        <div class="batch-pr-row" data-idx="1">
+                            <div class="input-group"><label>Owner</label><input type="text" class="cr-owner" placeholder="NUCORE"></div>
+                            <div class="input-group"><label>Repository</label><input type="text" class="cr-repo" placeholder="Itinerary-Builder-FE"></div>
+                        </div>
+                    </div>
+                    <div class="batch-actions">
+                        <button class="btn-secondary" id="codebase-add-repo">+ Add Repo</button>
+                        <button class="trigger-btn" id="codebase-submit">Start Codebase Review</button>
+                    </div>
                 </div>
             </div>
-            <div id="log-container" class="log-container"></div>
-        </section>
-    </main>
+        </div>
 
-    <script>
-        // --- State ---
-        let ws = null;
-        let autoScroll = true;
-        let reconnectDelay = 1000;
+        <!-- Codebase review history + results -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Codebase Review Results</div>
+            </div>
+            <div class="codebase-list" id="codebase-list">
+                <div class="empty-state">No codebase reviews yet</div>
+            </div>
+        </div>
 
-        // --- Helpers ---
-        function formatUptime(seconds) {
-            const h = Math.floor(seconds / 3600);
-            const m = Math.floor((seconds % 3600) / 60);
-            const s = seconds % 60;
-            if (h > 0) return `${h}h ${m}m`;
-            if (m > 0) return `${m}m ${s}s`;
-            return `${s}s`;
-        }
+        <!-- Result viewer (hidden by default) -->
+        <div class="card result-viewer" id="result-viewer" style="display: none;">
+            <div class="card-header">
+                <div class="card-title" id="result-viewer-title">Review Result</div>
+                <button class="btn-secondary" id="result-close">Close</button>
+            </div>
+            <div class="result-content" id="result-content"></div>
+        </div>
+    </div>
 
-        function formatDuration(sec) {
-            if (sec == null) return '--';
-            if (sec < 60) return `${Math.round(sec)}s`;
-            return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
-        }
+<script>
+// ============================================================
+// STATE
+// ============================================================
+let ws = null;
+let autoScroll = true;
+let reconnectDelay = 1000;
+let currentFilter = '';
 
-        function timeSince(ts) {
-            if (!ts) return '--';
-            const sec = Math.floor(Date.now() / 1000 - ts);
-            return formatDuration(sec) + ' ago';
-        }
+// ============================================================
+// HELPERS
+// ============================================================
+function formatUptime(seconds) {
+    const h = String(Math.floor(seconds / 3600)).padStart(2, '0');
+    const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+    const s = String(seconds % 60).padStart(2, '0');
+    return `${h}:${m}:${s}`;
+}
 
-        function statusBadge(status) {
-            const cls = {
-                'done': 'badge-done',
-                'failed': 'badge-failed',
-                'in-progress': 'badge-progress',
-                'queued': 'badge-queued',
-            }[status] || 'badge-queued';
-            return `<span class="badge ${cls}">${status}</span>`;
-        }
+function formatDuration(sec) {
+    if (sec == null) return '--';
+    if (sec < 60) return `${Math.round(sec)}s`;
+    return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+}
 
-        function logLevelClass(line) {
-            if (line.includes('[ERROR]')) return 'log-error';
-            if (line.includes('[WARNING]')) return 'log-warn';
-            if (line.includes('[DEBUG]')) return 'log-debug';
-            return 'log-info';
-        }
+function statusBadge(status) {
+    const map = {
+        'done':        { cls: 'badge-done',     label: 'Done' },
+        'failed':      { cls: 'badge-failed',   label: 'Failed' },
+        'in-progress': { cls: 'badge-progress', label: 'Active' },
+        'queued':      { cls: 'badge-queued',   label: 'Queued' },
+    };
+    const s = map[status] || map['queued'];
+    return `<span class="badge ${s.cls}"><span class="badge-dot"></span>${s.label}</span>`;
+}
 
-        // --- Status Polling ---
-        async function fetchStatus() {
-            try {
-                const res = await fetch('/api/status');
-                const data = await res.json();
+function logLevelClass(line) {
+    if (line.includes('[ERROR]')) return 'log-error';
+    if (line.includes('[WARNING]')) return 'log-warn';
+    if (line.includes('[DEBUG]')) return 'log-debug';
+    return 'log-info';
+}
 
-                document.getElementById('uptime').textContent = 'Uptime: ' + formatUptime(data.uptime_seconds);
-                document.getElementById('queue-size').textContent = data.queue_size;
-                document.getElementById('total-reviews').textContent = data.total_reviews;
-                document.getElementById('done-count').textContent = data.reviews_by_status.done || 0;
-                document.getElementById('failed-count').textContent = data.reviews_by_status.failed || 0;
+function animateValue(el, newVal) {
+    const current = el.textContent;
+    if (current === String(newVal)) return;
+    el.textContent = newVal;
+    el.style.transform = 'scale(1.15)';
+    el.style.transition = 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)';
+    setTimeout(() => { el.style.transform = 'scale(1)'; }, 200);
+}
 
-                const activeCount = data.workers.filter(w => w.status === 'reviewing').length;
-                document.getElementById('active-workers').textContent = `${activeCount}/${data.workers.length}`;
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const icon = type === 'success'
+        ? '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3 3 7-7"/></svg>'
+        : '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M6 6l4 4M10 6l-4 4"/></svg>';
+    toast.innerHTML = icon + `<span>${message}</span>`;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('toast-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
 
-                // Worker details
-                const detail = document.getElementById('workers-detail');
-                detail.innerHTML = data.workers.map(w => {
-                    if (w.status === 'reviewing') {
-                        const since = w.reviewing_since ? formatDuration(Math.floor(Date.now() / 1000 - w.reviewing_since)) : '';
-                        return `<div class="worker-row worker-active"><span class="worker-dot active"></span>${w.name}: reviewing <strong>${w.current_pr}</strong> (${since})</div>`;
-                    }
-                    return `<div class="worker-row"><span class="worker-dot idle"></span>${w.name}: idle</div>`;
-                }).join('');
-            } catch (e) {
-                console.error('Status fetch failed:', e);
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// Simple markdown to HTML (headings, bold, lists, code blocks)
+function renderMarkdown(md) {
+    if (!md) return '<span class="empty-state">No output</span>';
+    let html = escapeHtml(md);
+    // Code blocks
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+    // Headings
+    html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    // Bold
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // List items
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    // Horizontal rules
+    html = html.replace(/^---$/gm, '<hr>');
+    // Paragraphs (double newline)
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = '<p>' + html + '</p>';
+    // Clean up empty paragraphs
+    html = html.replace(/<p>\s*<\/p>/g, '');
+    html = html.replace(/<p>(<h[1-4]>)/g, '$1');
+    html = html.replace(/(<\/h[1-4]>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<pre>)/g, '$1');
+    html = html.replace(/(<\/pre>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<hr>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<li>)/g, '<ul>$1');
+    html = html.replace(/(<\/li>)<\/p>/g, '$1</ul>');
+    return html;
+}
+
+// ============================================================
+// TABS
+// ============================================================
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        // Refresh data for the active tab
+        if (tab.dataset.tab === 'batch') fetchBatchReviews();
+        if (tab.dataset.tab === 'codebase') fetchCodebaseReviews();
+    });
+});
+
+// ============================================================
+// POLLER TOGGLE
+// ============================================================
+document.getElementById('poller-toggle').addEventListener('click', async () => {
+    try {
+        const res = await fetch('/api/poller/toggle', { method: 'POST' });
+        const data = await res.json();
+        updatePollerUI(data.poller_running);
+        showToast(data.poller_running ? 'Poller started' : 'Poller stopped', 'success');
+    } catch (e) {
+        showToast('Failed to toggle poller', 'error');
+    }
+});
+
+function updatePollerUI(running) {
+    const dot = document.getElementById('poller-dot');
+    const label = document.getElementById('poller-label');
+    if (running) {
+        dot.className = 'poller-dot running';
+        label.textContent = 'Poller: On';
+    } else {
+        dot.className = 'poller-dot stopped';
+        label.textContent = 'Poller: Off';
+    }
+}
+
+// ============================================================
+// STATUS POLLING
+// ============================================================
+async function fetchStatus() {
+    try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        document.getElementById('uptime').textContent = formatUptime(data.uptime_seconds);
+        updatePollerUI(data.poller_running);
+
+        animateValue(document.getElementById('queue-size'), data.queue_size);
+        animateValue(document.getElementById('total-reviews'), data.total_reviews);
+        animateValue(document.getElementById('done-count'), data.reviews_by_status.done || 0);
+        animateValue(document.getElementById('failed-count'), data.reviews_by_status.failed || 0);
+
+        const activeCount = data.workers.filter(w => w.status === 'reviewing').length;
+        animateValue(document.getElementById('active-workers'), `${activeCount}/${data.workers.length}`);
+
+        const detail = document.getElementById('workers-detail');
+        detail.innerHTML = data.workers.map(w => {
+            if (w.status === 'reviewing') {
+                const elapsed = w.reviewing_since ? formatDuration(Math.floor(Date.now() / 1000 - w.reviewing_since)) : '';
+                return `<div class="worker-card active">
+                    <span class="worker-pulse active"></span>
+                    <span class="worker-name">${w.name}</span>
+                    <span class="worker-task">${w.current_pr}</span>
+                    <span class="worker-time">${elapsed}</span>
+                </div>`;
             }
+            return `<div class="worker-card">
+                <span class="worker-pulse idle"></span>
+                <span class="worker-name">${w.name}</span>
+                <span class="worker-task" style="color: var(--text-tertiary)">Idle</span>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        console.error('Status fetch failed:', e);
+    }
+}
+
+// ============================================================
+// REVIEWS
+// ============================================================
+async function fetchReviews() {
+    try {
+        const params = new URLSearchParams({ limit: '100' });
+        if (currentFilter) params.set('status', currentFilter);
+        const res = await fetch('/api/reviews?' + params);
+        const data = await res.json();
+        const tbody = document.getElementById('reviews-body');
+
+        if (data.reviews.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No reviews found</td></tr>';
+            return;
         }
 
-        // --- Reviews Polling ---
-        async function fetchReviews() {
-            try {
-                const filter = document.getElementById('status-filter').value;
-                const params = new URLSearchParams({ limit: '100' });
-                if (filter) params.set('status', filter);
+        tbody.innerHTML = data.reviews.map((r, i) => `
+            <tr style="animation-delay: ${i * 30}ms">
+                <td>${statusBadge(r.status)}</td>
+                <td class="pr-key">${r.pr_key || '--'}</td>
+                <td class="pr-title">${escapeHtml((r.title || '').substring(0, 55))}</td>
+                <td><div class="pr-author">
+                    <span class="author-avatar">${(r.sender || '?')[0]}</span>
+                    ${r.sender || '--'}
+                </div></td>
+                <td class="duration-cell">${formatDuration(r.duration_seconds)}</td>
+                <td class="link-cell">${r.gitea_url
+                    ? `<a href="${r.gitea_url}" target="_blank" rel="noopener">Open
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4.5 1.5H10.5V7.5M10.5 1.5L3 9"/></svg>
+                       </a>` : '--'}</td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        console.error('Reviews fetch failed:', e);
+    }
+}
 
-                const res = await fetch('/api/reviews?' + params);
-                const data = await res.json();
-                const tbody = document.getElementById('reviews-body');
+document.getElementById('filter-pills').addEventListener('click', (e) => {
+    const pill = e.target.closest('.filter-pill');
+    if (!pill) return;
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    currentFilter = pill.dataset.filter;
+    fetchReviews();
+});
 
-                if (data.reviews.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="empty">No reviews yet</td></tr>';
-                    return;
-                }
-
-                tbody.innerHTML = data.reviews.map(r => `
-                    <tr>
-                        <td>${statusBadge(r.status)}</td>
-                        <td class="pr-key">${r.pr_key || '--'}</td>
-                        <td class="pr-title">${(r.title || '').substring(0, 60)}</td>
-                        <td>${r.sender || '--'}</td>
-                        <td>${formatDuration(r.duration_seconds)}</td>
-                        <td>${r.triggered_by || '--'}</td>
-                        <td>${r.gitea_url ? `<a href="${r.gitea_url}" target="_blank" rel="noopener">Open</a>` : '--'}</td>
-                    </tr>
-                `).join('');
-            } catch (e) {
-                console.error('Reviews fetch failed:', e);
-            }
-        }
-
-        // --- Manual Trigger ---
-        document.getElementById('trigger-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const btn = document.getElementById('trigger-btn');
-            const msg = document.getElementById('trigger-msg');
-            btn.disabled = true;
-            msg.textContent = 'Triggering...';
-            msg.className = 'trigger-msg';
-
-            try {
-                const res = await fetch('/api/reviews/trigger', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        owner: document.getElementById('trigger-owner').value.trim(),
-                        repo: document.getElementById('trigger-repo').value.trim(),
-                        pr_number: parseInt(document.getElementById('trigger-pr').value),
-                    }),
-                });
-                const data = await res.json();
-
-                if (data.error) {
-                    msg.textContent = data.error;
-                    msg.className = 'trigger-msg trigger-error';
-                } else {
-                    msg.textContent = `Queued ${data.pr_key} for review`;
-                    msg.className = 'trigger-msg trigger-success';
-                    document.getElementById('trigger-pr').value = '';
-                    fetchReviews();
-                }
-            } catch (err) {
-                msg.textContent = 'Request failed: ' + err.message;
-                msg.className = 'trigger-msg trigger-error';
-            } finally {
-                btn.disabled = false;
-            }
+// ============================================================
+// MANUAL TRIGGER
+// ============================================================
+document.getElementById('trigger-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('trigger-btn');
+    btn.disabled = true;
+    btn.classList.add('loading');
+    try {
+        const res = await fetch('/api/reviews/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                owner: document.getElementById('trigger-owner').value.trim(),
+                repo: document.getElementById('trigger-repo').value.trim(),
+                pr_number: parseInt(document.getElementById('trigger-pr').value),
+            }),
         });
+        const data = await res.json();
+        if (data.error) { showToast(data.error, 'error'); }
+        else {
+            showToast(`Queued ${data.pr_key} for review`, 'success');
+            document.getElementById('trigger-pr').value = '';
+            fetchReviews();
+        }
+    } catch (err) { showToast('Request failed: ' + err.message, 'error'); }
+    finally { btn.disabled = false; btn.classList.remove('loading'); }
+});
 
-        // --- WebSocket Live Logs ---
-        function connectWebSocket() {
-            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${proto}//${location.host}/ws/logs`);
+// ============================================================
+// BATCH PR REVIEW
+// ============================================================
+document.getElementById('batch-add-pr').addEventListener('click', () => {
+    const list = document.getElementById('batch-pr-list');
+    const idx = list.children.length;
+    const row = document.createElement('div');
+    row.className = 'batch-pr-row';
+    row.dataset.idx = idx;
+    row.innerHTML = `
+        <div class="input-group"><label>Owner</label><input type="text" class="bp-owner" placeholder="NUCORE"></div>
+        <div class="input-group"><label>Repo</label><input type="text" class="bp-repo" placeholder="Repo"></div>
+        <div class="input-group"><label>PR #</label><input type="number" class="bp-pr" placeholder="#" min="1"></div>
+        <button class="btn-remove" onclick="this.parentElement.remove()">&times;</button>
+    `;
+    list.appendChild(row);
+});
 
-            ws.onopen = () => {
-                document.getElementById('ws-status').textContent = 'Connected';
-                document.getElementById('ws-status').className = 'connection-badge connected';
-                reconnectDelay = 1000;
-            };
+document.getElementById('batch-submit').addEventListener('click', async () => {
+    const rows = document.querySelectorAll('#batch-pr-list .batch-pr-row');
+    const prs = [];
+    for (const row of rows) {
+        const owner = row.querySelector('.bp-owner').value.trim();
+        const repo = row.querySelector('.bp-repo').value.trim();
+        const pr = row.querySelector('.bp-pr').value.trim();
+        if (owner && repo && pr) {
+            prs.push({ owner, repo, pr_number: parseInt(pr) });
+        }
+    }
+    if (prs.length < 2) {
+        showToast('Need at least 2 PRs for batch review', 'error');
+        return;
+    }
 
-            ws.onmessage = (event) => {
-                appendLog(event.data);
-            };
+    const btn = document.getElementById('batch-submit');
+    btn.disabled = true;
+    btn.classList.add('loading');
+    try {
+        const res = await fetch('/api/batch-reviews', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prs }),
+        });
+        const data = await res.json();
+        if (data.error) { showToast(data.error, 'error'); }
+        else {
+            showToast('Batch review started', 'success');
+            fetchBatchReviews();
+        }
+    } catch (err) { showToast('Request failed: ' + err.message, 'error'); }
+    finally { btn.disabled = false; btn.classList.remove('loading'); }
+});
 
-            ws.onclose = () => {
-                document.getElementById('ws-status').textContent = 'Disconnected';
-                document.getElementById('ws-status').className = 'connection-badge disconnected';
-                setTimeout(() => {
-                    reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
-                    connectWebSocket();
-                }, reconnectDelay);
-            };
+async function fetchBatchReviews() {
+    try {
+        const res = await fetch('/api/batch-reviews');
+        const data = await res.json();
+        const list = document.getElementById('batch-list');
 
-            ws.onerror = () => {
-                ws.close();
-            };
+        if (!data.reviews || data.reviews.length === 0) {
+            list.innerHTML = '<div class="empty-state">No batch reviews yet</div>';
+            return;
         }
 
-        function appendLog(line) {
-            const container = document.getElementById('log-container');
-            const div = document.createElement('div');
-            div.className = 'log-line ' + logLevelClass(line);
-            div.textContent = line;
-            container.appendChild(div);
+        list.innerHTML = data.reviews.map(r => {
+            const prLabels = (r.prs || []).map(p => `${p.owner}/${p.repo_name}#${p.number}`).join(', ');
+            return `<div class="batch-item">
+                <div class="batch-item-header">
+                    ${statusBadge(r.status)}
+                    <span class="batch-item-id">Batch ${r.id}</span>
+                    <span class="batch-item-prs">${prLabels}</span>
+                    <span class="duration-cell">${formatDuration(r.duration_seconds)}</span>
+                </div>
+                ${r.result ? `<div class="batch-item-result">${renderMarkdown(r.result)}</div>` : ''}
+                ${r.error ? `<div class="batch-item-error">${escapeHtml(r.error)}</div>` : ''}
+            </div>`;
+        }).join('');
+    } catch (e) {
+        console.error('Batch fetch failed:', e);
+    }
+}
 
-            // Cap at 2000 lines
-            while (container.children.length > 2000) {
-                container.removeChild(container.firstChild);
-            }
+// ============================================================
+// CODEBASE REVIEW
+// ============================================================
+document.getElementById('codebase-add-repo').addEventListener('click', () => {
+    const list = document.getElementById('codebase-repo-list');
+    const idx = list.children.length;
+    const row = document.createElement('div');
+    row.className = 'batch-pr-row';
+    row.dataset.idx = idx;
+    row.innerHTML = `
+        <div class="input-group"><label>Owner</label><input type="text" class="cr-owner" placeholder="NUCORE"></div>
+        <div class="input-group"><label>Repository</label><input type="text" class="cr-repo" placeholder="Repo"></div>
+        <button class="btn-remove" onclick="this.parentElement.remove()">&times;</button>
+    `;
+    list.appendChild(row);
+});
 
-            if (autoScroll) {
-                container.scrollTop = container.scrollHeight;
-            }
+document.getElementById('codebase-submit').addEventListener('click', async () => {
+    const rows = document.querySelectorAll('#codebase-repo-list .batch-pr-row');
+    const repos = [];
+    for (const row of rows) {
+        const owner = row.querySelector('.cr-owner').value.trim();
+        const repo = row.querySelector('.cr-repo').value.trim();
+        if (owner && repo) {
+            repos.push({ owner, repo });
+        }
+    }
+    if (repos.length < 1) {
+        showToast('Need at least 1 repository', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('codebase-submit');
+    btn.disabled = true;
+    btn.classList.add('loading');
+    try {
+        const res = await fetch('/api/codebase-reviews', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repos }),
+        });
+        const data = await res.json();
+        if (data.error) { showToast(data.error, 'error'); }
+        else {
+            showToast('Codebase review started', 'success');
+            fetchCodebaseReviews();
+        }
+    } catch (err) { showToast('Request failed: ' + err.message, 'error'); }
+    finally { btn.disabled = false; btn.classList.remove('loading'); }
+});
+
+async function fetchCodebaseReviews() {
+    try {
+        const res = await fetch('/api/codebase-reviews');
+        const data = await res.json();
+        const list = document.getElementById('codebase-list');
+
+        if (!data.reviews || data.reviews.length === 0) {
+            list.innerHTML = '<div class="empty-state">No codebase reviews yet</div>';
+            return;
         }
 
-        // Auto-scroll toggle
-        document.getElementById('auto-scroll').addEventListener('change', (e) => {
-            autoScroll = e.target.checked;
-            if (autoScroll) {
-                const container = document.getElementById('log-container');
-                container.scrollTop = container.scrollHeight;
-            }
-        });
+        list.innerHTML = data.reviews.map(r => {
+            const repoLabels = (r.repos || []).map(p => `${p.owner}/${p.repo}`).join(', ');
+            return `<div class="batch-item">
+                <div class="batch-item-header">
+                    ${statusBadge(r.status)}
+                    <span class="batch-item-id">Review ${r.id}</span>
+                    <span class="batch-item-prs">${repoLabels}</span>
+                    <span class="duration-cell">${formatDuration(r.duration_seconds)}</span>
+                    ${r.status === 'done' ? `<button class="btn-secondary btn-view" onclick="viewCodebaseResult('${r.id}')">View Report</button>` : ''}
+                </div>
+                ${r.error ? `<div class="batch-item-error">${escapeHtml(r.error)}</div>` : ''}
+            </div>`;
+        }).join('');
+    } catch (e) {
+        console.error('Codebase fetch failed:', e);
+    }
+}
 
-        // Pause auto-scroll when user scrolls up
-        document.getElementById('log-container').addEventListener('scroll', (e) => {
-            const el = e.target;
-            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-            if (!atBottom && autoScroll) {
-                autoScroll = false;
-                document.getElementById('auto-scroll').checked = false;
-            }
-        });
+async function viewCodebaseResult(cid) {
+    try {
+        const res = await fetch(`/api/codebase-reviews/${cid}`);
+        const data = await res.json();
+        const viewer = document.getElementById('result-viewer');
+        const repoLabels = (data.repos || []).map(p => `${p.owner}/${p.repo}`).join(' + ');
+        document.getElementById('result-viewer-title').textContent = `Codebase Review: ${repoLabels}`;
+        document.getElementById('result-content').innerHTML = renderMarkdown(data.result || 'No output');
+        viewer.style.display = 'block';
+        viewer.scrollIntoView({ behavior: 'smooth' });
+    } catch (e) {
+        showToast('Failed to load result', 'error');
+    }
+}
 
-        // Clear logs
-        document.getElementById('clear-logs').addEventListener('click', () => {
-            document.getElementById('log-container').innerHTML = '';
-        });
+document.getElementById('result-close').addEventListener('click', () => {
+    document.getElementById('result-viewer').style.display = 'none';
+});
 
-        // Filter change
-        document.getElementById('status-filter').addEventListener('change', fetchReviews);
+// ============================================================
+// WEBSOCKET
+// ============================================================
+function connectWebSocket() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws/logs`);
 
-        // --- Init ---
-        fetchStatus();
-        fetchReviews();
-        connectWebSocket();
-        setInterval(fetchStatus, 5000);
-        setInterval(fetchReviews, 10000);
-    </script>
+    ws.onopen = () => {
+        const el = document.getElementById('ws-status');
+        el.className = 'conn-indicator connected';
+        el.querySelector('.conn-label').textContent = 'Live';
+        reconnectDelay = 1000;
+    };
+
+    ws.onmessage = (event) => appendLog(event.data);
+
+    ws.onclose = () => {
+        const el = document.getElementById('ws-status');
+        el.className = 'conn-indicator disconnected';
+        el.querySelector('.conn-label').textContent = 'Offline';
+        setTimeout(() => {
+            reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+            document.getElementById('ws-status').className = 'conn-indicator connecting';
+            document.getElementById('ws-status').querySelector('.conn-label').textContent = 'Reconnecting';
+            connectWebSocket();
+        }, reconnectDelay);
+    };
+
+    ws.onerror = () => ws.close();
+}
+
+function appendLog(line) {
+    const container = document.getElementById('log-container');
+    const div = document.createElement('div');
+    div.className = 'log-line ' + logLevelClass(line);
+    div.textContent = line;
+    container.appendChild(div);
+    while (container.children.length > 2000) container.removeChild(container.firstChild);
+    if (autoScroll) container.scrollTop = container.scrollHeight;
+}
+
+document.getElementById('auto-scroll').addEventListener('change', (e) => {
+    autoScroll = e.target.checked;
+    if (autoScroll) document.getElementById('log-container').scrollTop = document.getElementById('log-container').scrollHeight;
+});
+
+document.getElementById('log-container').addEventListener('scroll', (e) => {
+    const el = e.target;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > 50 && autoScroll) {
+        autoScroll = false;
+        document.getElementById('auto-scroll').checked = false;
+    }
+});
+
+document.getElementById('clear-logs').addEventListener('click', () => {
+    document.getElementById('log-container').innerHTML = '';
+});
+
+// ============================================================
+// INIT
+// ============================================================
+fetchStatus();
+fetchReviews();
+connectWebSocket();
+setInterval(fetchStatus, 5000);
+setInterval(fetchReviews, 10000);
+// Refresh batch/codebase on interval if their tabs are visible
+setInterval(() => {
+    if (document.getElementById('tab-batch').classList.contains('active')) fetchBatchReviews();
+    if (document.getElementById('tab-codebase').classList.contains('active')) fetchCodebaseReviews();
+}, 8000);
+</script>
+
 </body>
 </html>

@@ -4,24 +4,36 @@ import json
 import os
 import threading
 import time
+import uuid
 from queue import Queue
 
 from config import DATA_DIR, REVIEWED_FILE
 
 REVIEWS_FILE = os.path.join(DATA_DIR, "reviews.json")
+BATCH_REVIEWS_FILE = os.path.join(DATA_DIR, "batch_reviews.json")
+CODEBASE_REVIEWS_FILE = os.path.join(DATA_DIR, "codebase_reviews.json")
 
 # --- Shared state ---
 review_queue = Queue()
-review_history = {}  # pr_key -> review metadata dict
-worker_status = {}   # thread_name -> {"status": "idle"|"reviewing", "pr_key": ..., "started_at": ...}
+review_history = {}       # pr_key -> review metadata dict
+worker_status = {}        # thread_name -> {"status", "pr_key", "started_at"}
 start_time = time.time()
+
+# Poller control
+poller_running = True
+
+# Batch reviews (cross-PR integration analysis)
+batch_reviews = {}        # id -> batch review metadata + result
+
+# Codebase reviews (full repo analysis, website-only)
+codebase_reviews = {}     # id -> codebase review metadata + result
 
 _lock = threading.Lock()
 
 
 def load_history():
     """Load review history from disk. Auto-migrates old reviewed.json format."""
-    global review_history
+    global review_history, batch_reviews, codebase_reviews
 
     # Try new format first
     if os.path.exists(REVIEWS_FILE):
@@ -29,10 +41,9 @@ def load_history():
             data = json.load(f)
         if isinstance(data, dict):
             review_history = data
-            return
 
     # Fall back to old format (flat array of PR keys)
-    if os.path.exists(REVIEWED_FILE):
+    elif os.path.exists(REVIEWED_FILE):
         with open(REVIEWED_FILE) as f:
             data = json.load(f)
         if isinstance(data, list):
@@ -50,9 +61,16 @@ def load_history():
                 for key in data
             }
             save_history()
-            return
 
-    review_history = {}
+    # Load batch reviews
+    if os.path.exists(BATCH_REVIEWS_FILE):
+        with open(BATCH_REVIEWS_FILE) as f:
+            batch_reviews = json.load(f)
+
+    # Load codebase reviews
+    if os.path.exists(CODEBASE_REVIEWS_FILE):
+        with open(CODEBASE_REVIEWS_FILE) as f:
+            codebase_reviews = json.load(f)
 
 
 def save_history():
@@ -61,6 +79,20 @@ def save_history():
     with open(tmp, "w") as f:
         json.dump(review_history, f, indent=2)
     os.replace(tmp, REVIEWS_FILE)
+
+
+def _save_batch_reviews():
+    tmp = BATCH_REVIEWS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(batch_reviews, f, indent=2)
+    os.replace(tmp, BATCH_REVIEWS_FILE)
+
+
+def _save_codebase_reviews():
+    tmp = CODEBASE_REVIEWS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(codebase_reviews, f, indent=2)
+    os.replace(tmp, CODEBASE_REVIEWS_FILE)
 
 
 def update_review(pr_key, status, metadata=None):
@@ -107,6 +139,88 @@ def set_worker_status(thread_name, status, pr_key=None):
         }
 
 
+# --- Batch review state ---
+def create_batch_review(prs):
+    """Create a new batch review entry. Returns the id."""
+    with _lock:
+        bid = str(uuid.uuid4())[:8]
+        batch_reviews[bid] = {
+            "id": bid,
+            "prs": prs,
+            "status": "queued",
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+            "started_at": None,
+            "completed_at": None,
+            "duration_seconds": None,
+        }
+        _save_batch_reviews()
+        return bid
+
+
+def update_batch_review(bid, status, result=None, error=None):
+    with _lock:
+        entry = batch_reviews.get(bid)
+        if not entry:
+            return
+        entry["status"] = status
+        if status == "in-progress":
+            entry["started_at"] = time.time()
+        elif status in ("done", "failed"):
+            entry["completed_at"] = time.time()
+            if entry.get("started_at"):
+                entry["duration_seconds"] = round(
+                    entry["completed_at"] - entry["started_at"], 1
+                )
+        if result is not None:
+            entry["result"] = result
+        if error is not None:
+            entry["error"] = error
+        _save_batch_reviews()
+
+
+# --- Codebase review state ---
+def create_codebase_review(repos):
+    """Create a new codebase review entry. Returns the id."""
+    with _lock:
+        cid = str(uuid.uuid4())[:8]
+        codebase_reviews[cid] = {
+            "id": cid,
+            "repos": repos,
+            "status": "queued",
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+            "started_at": None,
+            "completed_at": None,
+            "duration_seconds": None,
+        }
+        _save_codebase_reviews()
+        return cid
+
+
+def update_codebase_review(cid, status, result=None, error=None):
+    with _lock:
+        entry = codebase_reviews.get(cid)
+        if not entry:
+            return
+        entry["status"] = status
+        if status == "in-progress":
+            entry["started_at"] = time.time()
+        elif status in ("done", "failed"):
+            entry["completed_at"] = time.time()
+            if entry.get("started_at"):
+                entry["duration_seconds"] = round(
+                    entry["completed_at"] - entry["started_at"], 1
+                )
+        if result is not None:
+            entry["result"] = result
+        if error is not None:
+            entry["error"] = error
+        _save_codebase_reviews()
+
+
 def get_status_snapshot():
     """Return a snapshot of system status for the API."""
     with _lock:
@@ -120,6 +234,7 @@ def get_status_snapshot():
 
     return {
         "uptime_seconds": round(time.time() - start_time),
+        "poller_running": poller_running,
         "queue_size": review_queue.qsize(),
         "workers": [
             {
